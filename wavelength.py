@@ -11,9 +11,28 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
+
+CM_PER_PIXEL = {
+    1: 0.1162655505173817,
+    2: 0.11737089201877934,
+    3: 0.11717834544176235,
+    4: 0.12001920307249161,
+    5: 0.12022120702091847,
+    6: 0.11682242990654207,
+    7: 0.12175818823815902,
+    8: 0.12285012285012284,
+    9: 0.12454851164528583,
+    10: 0.1249375312343828,
+    11: 0.126806999746386,
+    12: 0.12883277505797474
+}
+
+
 # --------------- Configuration ---------------
 VIDEO_PATH = "9cm14hz.mp4"
-SCALE_MM_PER_PIXEL = 0.1  # mm per pixel
+PLANE_HEIGHT = 9  # CM
+SIGNAL_FREQ = 14  # Hz
+SCALE_MM_PER_PIXEL = CM_PER_PIXEL[PLANE_HEIGHT] * 10  # Convert cm to mm
 
 # --------------- Parameters ---------------
 GAUSSIAN_SIGMA = 3
@@ -105,8 +124,9 @@ def process_frame(frame, roi, params):
         real_wavelength_mm = avg_pixel_wavelength * SCALE_MM_PER_PIXEL
         valley_intensity_std = float(np.std(smoothed[valleys]))
         avg_prominence = float(np.mean(properties.get("prominences", [])))
-        return real_wavelength_mm, smoothed, valleys, valley_intensity_std, avg_prominence
-    return None, smoothed, valleys, None, None
+        velocity = real_wavelength_mm * SIGNAL_FREQ  # mm/s
+        return real_wavelength_mm, smoothed, valleys, valley_intensity_std, avg_prominence, velocity
+    return None, smoothed, valleys, None, None, None
 
 
 def evaluate_params(video_path, roi, params, collect_sample=False, collect_series=False):
@@ -117,7 +137,7 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
     frame_idx = 0
     sample_smoothed = None
     sample_valleys = None
-
+    velocities = []
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -127,7 +147,7 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
         if not ret:
             break
 
-        wl, smoothed, valleys, valley_intensity_std, avg_prominence = process_frame(frame, roi, params)
+        wl, smoothed, valleys, valley_intensity_std, avg_prominence, velocity = process_frame(frame, roi, params)
 
         if wl is not None:
             frame_wavelengths.append(wl)
@@ -136,6 +156,8 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
                 valley_intensity_stds.append(valley_intensity_std)
             if avg_prominence is not None:
                 valley_prominences.append(avg_prominence)
+            if velocity is not None:
+                velocities.append(velocity)
 
         if collect_sample and sample_smoothed is None and wl is not None:
             sample_smoothed = smoothed
@@ -152,6 +174,7 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
         avg_valleys = float(np.mean(valley_counts))
         avg_valley_intensity_std = float(np.mean(valley_intensity_stds)) if valley_intensity_stds else float("nan")
         avg_valley_prominence = float(np.mean(valley_prominences)) if valley_prominences else float("nan")
+        avg_velocity = float(np.mean(velocities)) if velocities else float("nan")
     else:
         wavelengths = np.array([])
         mean_wl = float("nan")
@@ -159,7 +182,7 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
         avg_valleys = float("nan")
         avg_valley_intensity_std = float("nan")
         avg_valley_prominence = float("nan")
-
+        avg_velocity = float("nan")
     valid_ratio = len(frame_wavelengths) / frame_idx if frame_idx else 0.0
 
     return {
@@ -174,6 +197,7 @@ def evaluate_params(video_path, roi, params, collect_sample=False, collect_serie
         "wavelengths": wavelengths if collect_series else None,
         "sample_smoothed": sample_smoothed,
         "sample_valleys": sample_valleys,
+        "avg_velocity": avg_velocity,
     }
 
 
@@ -205,12 +229,13 @@ def main():
     frame_idx = stats["total_frames"]
     sample_smoothed = stats["sample_smoothed"]
     sample_valleys = stats["sample_valleys"]
-
+    avg_velocity = stats["avg_velocity"]
     print(f"\n{'='*50}")
     print(f"Frames processed:  {frame_idx}")
     print(f"Valid measurements: {stats['valid_count']}")
     print(f"Mean wavelength:   {mean_wl:.3f} mm")
     print(f"Std deviation:     {std_wl:.3f} mm")
+    print(f"Average velocity:  {avg_velocity:.3f} mm/s")
     print(f"{'='*50}")
 
     # --- Diagnostic plot ---
